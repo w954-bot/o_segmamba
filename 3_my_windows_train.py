@@ -38,10 +38,10 @@ class ECTrainer(Trainer):
                                         sw_batch_size=2,
                                         overlap=0.5)
         self.augmentation = augmentation
-        from model_segmamba.segmamba import SegMamba
+        from model_ecmamba.gsc_mamba import GSCMamba
 
         # Single-modality input (1 channel) and two-class output (background + tumor)
-        self.model = SegMamba(in_chans=1,
+        self.model = GSCMamba(in_chans=1,
                         out_chans=2,
                         depths=[2,2,2,2],
                         feat_size=[48, 96, 192, 384])
