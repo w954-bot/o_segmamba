@@ -5,14 +5,14 @@ import torch
 from monai.inferers import SlidingWindowInferer
 from monai.utils import set_determinism
 
-from light_training.dataloading.dataset import get_train_val_test_loader_from_train
+from light_training.dataloading.dataset import get_train_val_test_loader_from_train,get_loader_from_txt
 from light_training.evaluation.metric import dice
 from light_training.trainer import Trainer
 from light_training.prediction import Predictor
 import nibabel as nib
 
 set_determinism(123)
-
+# 记得更改81行权重位置
 data_dir = "./data/fullres/train"
 env = "pytorch"
 max_epoch = 600
@@ -78,7 +78,7 @@ class SingleModalBinaryTrainer(Trainer):
         )
 
         # TODO: 换成你自己的权重路径
-        model_path = "logs/segmamba_windows/model/best_model_0.7819.pt"
+        model_path = "logs/segmamba_windows/model/best_model_0.7500.pt"
 
         sd = torch.load(model_path, map_location="cpu")
         sd = self.filter_state_dict(sd)
@@ -213,7 +213,7 @@ if __name__ == "__main__":
         training_script=__file__,
     )
 
-    train_ds, val_ds, test_ds = get_train_val_test_loader_from_train(data_dir)
+    train_ds, val_ds, test_ds = get_loader_from_txt('dataset_split_info.txt')
 
     # 测试集逐case推理/验证
     trainer.validation_single_gpu(test_ds)
