@@ -1,4 +1,4 @@
-from light_training.dataloading.dataset import get_train_val_test_loader_from_train
+from light_training.dataloading.dataset import get_train_val_test_loader_from_train,get_loader_from_txt
 from monai.utils import set_determinism
 import os
 import numpy as np
@@ -53,7 +53,7 @@ def cal_metric_binary(gt_mask, pred_mask, voxel_spacing_zyx):
 
 if __name__ == "__main__":
     data_dir = "./data/fullres/train"
-    test_ds = get_train_val_test_loader_from_train(data_dir)[2]  # (train_ds, val_ds, test_ds)
+    test_ds = get_loader_from_txt('dataset_split_info.txt')[2]  # (train_ds, val_ds, test_ds)
     print("num test cases =", len(test_ds))
 
     all_results = np.zeros((len(test_ds), 2), dtype=np.float32)  # (N, [dice, hd95])
