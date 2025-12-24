@@ -1,3 +1,4 @@
+# 记得更改81行权重位置
 import os
 import numpy as np
 import torch
@@ -12,7 +13,6 @@ from light_training.prediction import Predictor
 import nibabel as nib
 
 set_determinism(123)
-# 记得更改81行权重位置
 data_dir = "./data/fullres/train"
 env = "pytorch"
 max_epoch = 600
