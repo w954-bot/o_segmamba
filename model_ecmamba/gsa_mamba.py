@@ -1,13 +1,3 @@
-# Copyright (c) MONAI Consortium
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#     http://www.apache.org/licenses/LICENSE-2.0
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
 
 from __future__ import annotations
 import torch.nn as nn
@@ -18,6 +8,7 @@ from monai.networks.blocks.dynunet_block import UnetOutBlock
 from monai.networks.blocks.unetr_block import UnetrBasicBlock, UnetrUpBlock
 from mamba_ssm import Mamba
 import torch.nn.functional as F 
+from .GSA3D import GSA3d
 
 class LayerNorm(nn.Module):
     r""" LayerNorm that supports two data formats: channels_last (default) or channels_first.
@@ -88,55 +79,13 @@ class MlpChannel(nn.Module):
         x = self.fc2(x)
         return x
 
-class GSC(nn.Module):
-    def __init__(self, in_channles) -> None:
-        super().__init__()
-
-        self.proj = nn.Conv3d(in_channles, in_channles, 3, 1, 1)
-        self.norm = nn.InstanceNorm3d(in_channles)
-        self.nonliner = nn.ReLU()
-
-        self.proj2 = nn.Conv3d(in_channles, in_channles, 3, 1, 1)
-        self.norm2 = nn.InstanceNorm3d(in_channles)
-        self.nonliner2 = nn.ReLU()
-
-        self.proj3 = nn.Conv3d(in_channles, in_channles, 1, 1, 0)
-        self.norm3 = nn.InstanceNorm3d(in_channles)
-        self.nonliner3 = nn.ReLU()
-
-        self.proj4 = nn.Conv3d(in_channles, in_channles, 1, 1, 0)
-        self.norm4 = nn.InstanceNorm3d(in_channles)
-        self.nonliner4 = nn.ReLU()
-
-    def forward(self, x):
-
-        x_residual = x 
-
-        x1 = self.proj(x)
-        x1 = self.norm(x1)
-        x1 = self.nonliner(x1)
-
-        x1 = self.proj2(x1)
-        x1 = self.norm2(x1)
-        x1 = self.nonliner2(x1)
-
-        x2 = self.proj3(x)
-        x2 = self.norm3(x2)
-        x2 = self.nonliner3(x2)
-
-        x = x1 + x2
-        x = self.proj4(x)
-        x = self.norm4(x)
-        x = self.nonliner4(x)
-        
-        return x + x_residual
 
 class MambaEncoder(nn.Module):
     def __init__(self, in_chans=1, depths=[2, 2, 2, 2], dims=[48, 96, 192, 384],
                  drop_path_rate=0., layer_scale_init_value=1e-6, out_indices=[0, 1, 2, 3]):
         super().__init__()
 
-        self.downsample_layers = nn.ModuleList() # stem and 3 intermediate downsampling conv layers
+        self.downsample_layers = nn.ModuleList() 
         stem = nn.Sequential(
               nn.Conv3d(in_chans, dims[0], kernel_size=7, stride=2, padding=3),
               )
@@ -150,35 +99,45 @@ class MambaEncoder(nn.Module):
             self.downsample_layers.append(downsample_layer)
 
         self.stages = nn.ModuleList()
-        self.gscs = nn.ModuleList()
+        
+        self.gsa_layers = nn.ModuleList() 
+        
         num_slices_list = [64, 32, 16, 8]
         cur = 0
         for i in range(4):
-            gsc = GSC(dims[i])
+            # [修改点 2]: 用 GSA3d 进行提取
+            # 注意: GSA3d 的 input_dim 和 embed_dim 设置为相同，以保持通道数不变
+            gsa = GSA3d(input_dim=dims[i], embed_dim=dims[i])
 
             stage = nn.Sequential(
                 *[MambaLayer(dim=dims[i], num_slices=num_slices_list[i]) for j in range(depths[i])]
             )
 
             self.stages.append(stage)
-            self.gscs.append(gsc)
+            self.gsa_layers.append(gsa) # 添加 GSA
             cur += depths[i]
 
         self.out_indices = out_indices
-
+        
+        # ... (这部分 MLP 代码保持不变) ...
         self.mlps = nn.ModuleList()
         for i_layer in range(4):
-            layer = nn.InstanceNorm3d(dims[i_layer])
-            layer_name = f'norm{i_layer}'
-            self.add_module(layer_name, layer)
-            self.mlps.append(MlpChannel(dims[i_layer], 2 * dims[i_layer]))
+             # ... 保持不变
+             layer = nn.InstanceNorm3d(dims[i_layer])
+             layer_name = f'norm{i_layer}'
+             self.add_module(layer_name, layer)
+             self.mlps.append(MlpChannel(dims[i_layer], 2 * dims[i_layer]))
 
     def forward_features(self, x):
         outs = []
         for i in range(4):
             x = self.downsample_layers[i](x)
-            x = self.gscs[i](x)
-            x = self.stages[i](x)
+            
+            # [修改点 3]: 调用 GSA 模块
+            # 原来是: x = self.gscs[i](x)
+            x = self.gsa_layers[i](x) 
+            
+            x = self.stages[i](x) # 进入 Mamba Layer
 
             if i in self.out_indices:
                 norm_layer = getattr(self, f'norm{i}')
@@ -187,16 +146,16 @@ class MambaEncoder(nn.Module):
                 outs.append(x_out)
 
         return tuple(outs)
-
+    
     def forward(self, x):
         x = self.forward_features(x)
         return x
 
-class SegMamba(nn.Module):
+class GSAMamba(nn.Module):
     def __init__(
         self,
         in_chans=1,
-        out_chans=13,
+        out_chans=2,
         depths=[2, 2, 2, 2],
         feat_size=[48, 96, 192, 384],
         drop_path_rate=0,
